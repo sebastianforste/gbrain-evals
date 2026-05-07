@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 200" width="880" height="200">
+  <rect width="880" height="200" fill="#0a0a0a" />
+  
+      <g transform="translate(24,24)">
+        <rect width="404" height="152" rx="8" fill="#171717" stroke="#9ca3af" stroke-width="2" />
+        <text x="202" y="32" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" fill="#9ca3af">gbrain-keyword</text>
+        <text x="202" y="80" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,monospace" font-size="44" font-weight="700" fill="#9ca3af">25.0%</text>
+        <text x="202" y="140" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,monospace" font-size="11" fill="#9ca3af">n=60 · k=8 · 34s</text>
+      </g>
+    
+      <g transform="translate(452,24)">
+        <rect width="404" height="152" rx="8" fill="#171717" stroke="#16a34a" stroke-width="2" />
+        <text x="202" y="32" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" fill="#9ca3af">gbrain-hybrid</text>
+        <text x="202" y="80" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,monospace" font-size="44" font-weight="700" fill="#16a34a">98.3%</text>
+        <text x="202" y="140" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,monospace" font-size="11" fill="#9ca3af">n=60 · k=8 · 1880s</text>
+      </g>
+    
+</svg>
