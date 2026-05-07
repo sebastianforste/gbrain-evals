@@ -35,8 +35,8 @@
  *   https://huggingface.co/datasets/xiaowu0162/longmemeval
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync } from 'fs';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { PGLiteEngine } from 'gbrain/pglite-engine';
 import { importFromContent } from 'gbrain/import-file';
@@ -44,6 +44,7 @@ import { hybridSearch } from 'gbrain/search/hybrid';
 import { expandQuery } from 'gbrain/search/expansion';
 import type { SearchResult } from 'gbrain/types';
 import { loadConfig } from 'gbrain/config';
+import { embed } from '../../node_modules/gbrain/src/core/embedding.ts';
 import {
   configureGateway,
   __setEmbedTransportForTests,
@@ -68,6 +69,13 @@ interface Opts {
   cacheDir: string;
   noCache: boolean;
   output: string;
+  /** Per-question NDJSON stream path. Resume-friendly: existing rows are skipped. */
+  ndjsonPath: string;
+  /** Wall-clock budget; exit cleanly when exceeded so a wrapper can restart. */
+  maxWallSeconds: number | null;
+  /** Worker shard: this process handles questions where `i % totalWorkers === workerId`. */
+  workerId: number;
+  totalWorkers: number;
 }
 
 function parseOpts(): Opts {
@@ -93,14 +101,40 @@ function parseOpts(): Opts {
     topK: Number(arg(args, '--top-k') ?? '8'),
     keywordOnly: args.includes('--keyword-only'),
     adapters,
-    // Default cache lives under eval/data/ which is COMMITTED. Anyone who
-    // clones the repo gets the warm cache for free — embedding-only runs
-    // become ~$0 instead of ~$5 on the _s split. Override with --cache-dir
-    // if you want a private/ephemeral cache.
-    cacheDir: arg(args, '--cache-dir') ?? join(import.meta.dir, '..', 'data', 'longmemeval', 'embed-cache'),
+    // Default cache lives under eval/reports/ which is gitignored — the
+    // SQLite cache for the full _s split is ~700MB, too big to commit
+    // under plain git. First run pays ~$2 in OpenAI embeddings; the
+    // SHA-256(text) keying makes the cache content-addressed so subsequent
+    // runs hit cache and complete in minutes for ~$0. To share warm cache
+    // across machines, copy the file in the embed-cache/ directory.
+    cacheDir: arg(args, '--cache-dir') ?? join(import.meta.dir, '..', 'reports', 'longmemeval', 'embed-cache'),
     noCache: args.includes('--no-cache'),
     output: arg(args, '--output') ?? '',
+    ndjsonPath: arg(args, '--ndjson') ?? '',
+    maxWallSeconds: arg(args, '--max-wall-seconds') ? Number(arg(args, '--max-wall-seconds')) : null,
+    workerId: arg(args, '--worker-id') ? Number(arg(args, '--worker-id')) : 0,
+    totalWorkers: arg(args, '--total-workers') ? Number(arg(args, '--total-workers')) : 1,
   };
+}
+
+/**
+ * Read an existing NDJSON stream and return the set of (adapter, question_id)
+ * pairs already completed. The wrapper loop relies on this for resume.
+ */
+function readCompletedPairs(path: string): Set<string> {
+  const done = new Set<string>();
+  if (!path || !existsSync(path)) return done;
+  const raw = readFileSync(path, 'utf8');
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const obj = JSON.parse(line);
+      if (obj?.adapter && obj?.question_id) {
+        done.add(`${obj.adapter}::${obj.question_id}`);
+      }
+    } catch { /* skip malformed line */ }
+  }
+  return done;
 }
 
 /**
@@ -273,12 +307,14 @@ async function run(opts: Opts): Promise<RunSummary[]> {
 
   const summaries: RunSummary[] = [];
 
-  // Recycle the engine every RECYCLE_EVERY questions to bound memory.
-  // PGLite in-memory holds tuples even after TRUNCATE (MVCC dead-row
-  // accumulation) — at 50 sessions × 50ms per question it climbs past
-  // 5GB by Q200. Reconnect every 100 questions: ~2s cold-start overhead
-  // × 5 cycles = 10s extra wall time, vs 5GB of unrecoverable memory.
-  const RECYCLE_EVERY = 100;
+  // Recycle the engine every RECYCLE_EVERY questions to bound memory AND
+  // bound PGLite WASM state. The WASM module accumulates internal state
+  // beyond what TRUNCATE clears; on long runs (500Q × 50 sessions ×
+  // chunked + indexed) we've seen it lock up in an abort() loop after
+  // ~75 questions. Recycling every 25Q keeps the WASM healthy at the
+  // cost of ~2s cold-start × 20 cycles = ~40s extra wall time. Cheap
+  // insurance against silent hangs that wasted hours of API spend.
+  const RECYCLE_EVERY = 25;
 
   // Configure the AI gateway once (v0.27+ requires this before embed() works).
   // Mirror cli.ts#connectEngine: read config + env, hand to configureGateway.
@@ -322,7 +358,25 @@ async function run(opts: Opts): Promise<RunSummary[]> {
     }
   }
 
+  // Resume support: when --ndjson is given, every per-question result is
+  // appended immediately. On restart we read it back and skip already-done
+  // (adapter, question_id) pairs. Pair this with --max-wall-seconds and a
+  // wrapper bash loop to chip through the full run in 10-min batches:
+  // each batch processes questions until the budget runs out, then exits
+  // cleanly. The next invocation picks up exactly where the prior one left
+  // off. PGLite WASM aborts can't strand us anymore — at worst we lose the
+  // current question and resume on the next.
+  const completed = readCompletedPairs(opts.ndjsonPath);
+  if (opts.ndjsonPath) {
+    mkdirSync(dirname(opts.ndjsonPath) || '.', { recursive: true });
+    process.stderr.write(`[longmemeval] ndjson stream: ${opts.ndjsonPath} (${completed.size} pairs already complete)\n`);
+  }
+  const wallStart = Date.now();
+  const wallBudgetMs = opts.maxWallSeconds ? opts.maxWallSeconds * 1000 : Infinity;
+  let timedOut = false;
+
   for (const adapter of adapters) {
+    if (timedOut) break;
     process.stderr.write(`\n[longmemeval] adapter=${adapter.name} (mode=${adapter.mode})\n`);
     let engine = new PGLiteEngine();
     await engine.connect({});
@@ -331,15 +385,47 @@ async function run(opts: Opts): Promise<RunSummary[]> {
     const results: QuestionResult[] = [];
 
     try {
+      // Per-question watchdog: PGLite's WASM has been observed to enter a
+      // tight Aborted() loop on certain inputs after ~75 vector questions —
+      // process keeps using CPU but writes nothing for hours. Catching is
+      // not enough (Aborted() is a WASM-level trap, not a JS throw); we
+      // bound each question with a wall-clock timeout. On timeout we
+      // forcibly disconnect, recreate the engine, and skip the question.
+      const PER_QUESTION_TIMEOUT_MS = 90_000;
+
+      async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+        return await Promise.race([
+          p,
+          new Promise<T>((_, reject) =>
+            setTimeout(() => reject(new Error(`question_timeout_${ms}ms`)), ms),
+          ),
+        ]);
+      }
+
+      async function resetEngineHard(): Promise<void> {
+        try { await engine.disconnect(); } catch { /* WASM aborted; ignore */ }
+        engine = new PGLiteEngine();
+        await engine.connect({});
+        await engine.initSchema();
+      }
+
       for (let i = 0; i < all.length; i++) {
         const q = all[i];
+        // Worker shard: each parallel worker handles 1/N of the questions.
+        // Deterministic by index so workers don't fight over the same row.
+        if (opts.totalWorkers > 1 && i % opts.totalWorkers !== opts.workerId) continue;
+        // Skip pairs already streamed to NDJSON (resume + cross-worker dedup).
+        if (completed.has(`${adapter.name}::${q.question_id}`)) continue;
+        // Wall-budget exit: clean exit lets the wrapper restart cleanly.
+        if (Date.now() - wallStart > wallBudgetMs) {
+          process.stderr.write(`[longmemeval] wall budget reached (${opts.maxWallSeconds}s); exiting for restart\n`);
+          timedOut = true;
+          break;
+        }
         const qStart = Date.now();
         try {
           if (i > 0 && i % RECYCLE_EVERY === 0) {
-            await engine.disconnect();
-            engine = new PGLiteEngine();
-            await engine.connect({});
-            await engine.initSchema();
+            await resetEngineHard();
           } else {
             await resetTables(engine);
           }
@@ -351,9 +437,12 @@ async function run(opts: Opts): Promise<RunSummary[]> {
             // Normalize at the boundary so the dataset's mixed-case session_ids
             // (e.g. "sharegpt_yywfIrx_0") work end-to-end.
             const slug = `chat/${s.session_id}`.toLowerCase();
-            await importFromContent(engine, slug, renderSession(s), {
-              noEmbed: adapter.mode === 'keyword',
-            });
+            await withTimeout(
+              importFromContent(engine, slug, renderSession(s), {
+                noEmbed: adapter.mode === 'keyword',
+              }),
+              PER_QUESTION_TIMEOUT_MS,
+            );
           }
           let searchResults: SearchResult[];
           if (adapter.mode === 'keyword') {
@@ -363,7 +452,6 @@ async function run(opts: Opts): Promise<RunSummary[]> {
             // direct flag, so call engine.searchVector after embedding the
             // query. Mirrors what hybridSearch does for the vector half.
             // Embedding goes through the cached transport just like imports.
-            const { embed } = await import('../../node_modules/gbrain/src/core/embedding.ts');
             const queryEmb = await embed(q.question);
             searchResults = await engine.searchVector(queryEmb, { limit: opts.topK });
           } else if (adapter.mode === 'hybrid') {
@@ -384,7 +472,7 @@ async function run(opts: Opts): Promise<RunSummary[]> {
           const gt = new Set(q.answer_session_ids.map(s => s.toLowerCase()));
           const hit = retrieved.some(s => gt.has(s.toLowerCase()));
 
-          results.push({
+          const row = {
             question_id: q.question_id,
             question_type: q.question_type,
             retrieved,
@@ -392,7 +480,11 @@ async function run(opts: Opts): Promise<RunSummary[]> {
             hit_at_k: hit,
             num_haystack: sessions.length,
             latency_ms: Date.now() - qStart,
-          });
+          };
+          results.push(row);
+          if (opts.ndjsonPath) {
+            appendFileSync(opts.ndjsonPath, JSON.stringify({ adapter: adapter.name, ...row }) + '\n');
+          }
 
           if ((i + 1) % 25 === 0 || i === all.length - 1) {
             const hits = results.filter(r => r.hit_at_k).length;
@@ -402,9 +494,17 @@ async function run(opts: Opts): Promise<RunSummary[]> {
             );
           }
         } catch (err: any) {
-          process.stderr.write(`[${adapter.name}] ${q.question_id} error: ${err?.message ?? err}\n`);
+          const msg = String(err?.message ?? err);
+          process.stderr.write(`[${adapter.name}] ${q.question_id} error: ${msg}\n`);
           if (i === 0) process.stderr.write(`stack: ${err?.stack ?? ''}\n`);
-          results.push({
+          // On timeout (WASM hang / abort loop), the engine is unrecoverable.
+          // Force a hard reset so the next question starts clean.
+          if (msg.startsWith('question_timeout_')) {
+            try { await resetEngineHard(); } catch (e: any) {
+              process.stderr.write(`[${adapter.name}] engine reset failed: ${e?.message ?? e}\n`);
+            }
+          }
+          const errRow = {
             question_id: q.question_id,
             question_type: q.question_type,
             retrieved: [],
@@ -412,7 +512,12 @@ async function run(opts: Opts): Promise<RunSummary[]> {
             hit_at_k: false,
             num_haystack: 0,
             latency_ms: Date.now() - qStart,
-          });
+            error: msg,
+          };
+          results.push(errRow);
+          if (opts.ndjsonPath) {
+            appendFileSync(opts.ndjsonPath, JSON.stringify({ adapter: adapter.name, ...errRow }) + '\n');
+          }
         }
       }
     } finally {
