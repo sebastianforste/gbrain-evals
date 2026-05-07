@@ -36,6 +36,12 @@ export class EmbeddingCache {
     mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path);
     this.db.exec('PRAGMA journal_mode = WAL');
+    // Concurrent workers (longmemeval-batch.sh runs 3+ workers in parallel)
+    // share this cache file. WAL handles the readers-vs-writer case, but the
+    // writer-vs-writer case still serializes. Without busy_timeout, the second
+    // writer hits SQLITE_BUSY immediately and the embed call dies as
+    // "database is locked". Wait up to 10s before giving up.
+    this.db.exec('PRAGMA busy_timeout = 10000');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS embeddings (
         model TEXT NOT NULL,
