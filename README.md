@@ -1,15 +1,29 @@
 # gbrain-evals
 
-**BrainBench — the public benchmark for personal knowledge agent stacks.**
+**Public benchmarks for personal-knowledge agent stacks.** Two families,
+both reproducible: BrainBench (our own corpus, in-house Cats 1–12) and
+public benchmarks (LongMemEval today, ConvoMem + LoCoMo on the roadmap).
 
-Scores four adapter configurations (gbrain, grep-only, vector RAG,
-gbrain-without-graph) side-by-side on a 240-page fictional-life corpus.
-Answers the question: *"does the knowledge graph layer do useful work, or
-is gbrain just a thin wrapper over vector-grep-rrf-fusion retrieval?"*
+## Latest results
 
-Headline on v0.12.1: **gbrain P@5 49.1%, R@5 97.9%** — beats its own
-graph-disabled variant by **+31.4 points P@5**, grep-only by 32 points,
-vector by 38 points. The graph layer is load-bearing.
+**LongMemEval `_s` (full 500-question public benchmark, 2026-05-07)** —
+gbrain-hybrid hits **97.60% R@5**, beating MemPalace's published raw
+baseline by 1.0pt on the same dataset, K, and n with no LLM in the
+retrieval loop. Per-type wins: +7.1pt single-session-assistant, +1.5pt
+multi-session, ties on user/preference, -1.5pt temporal-reasoning.
+**Read the full report:** [docs/benchmarks/2026-05-07-longmemeval-s.md](docs/benchmarks/2026-05-07-longmemeval-s.md).
+
+**BrainBench v0.12.1 (in-house corpus, 2026-04-19)** — gbrain P@5 49.1%,
+R@5 97.9% on the 240-page fictional-life corpus. Beats its own
+graph-disabled variant by +31.4pt P@5, grep-only by 32 points, vector by
+38 points. The graph layer is load-bearing.
+
+| Benchmark | Latest result | Date | Report |
+|---|---|---|---|
+| LongMemEval `_s` (public) | gbrain-hybrid 97.60% R@5 | 2026-05-07 | [link](docs/benchmarks/2026-05-07-longmemeval-s.md) |
+| BrainBench Cat 13b — Source Swamp | gbrain top-1 93.3% | 2026-04-25 | [link](docs/benchmarks/2026-04-25-brainbench-cat13b-source-swamp.md) |
+| BrainBench v0.20.0 baseline | gbrain P@5 49.1% / R@5 97.9% | 2026-04-23 | [link](docs/benchmarks/2026-04-23-brainbench-v0.20.0.md) |
+| Cross-system comparison | MemPal / Hindsight / Mastra / Stella / Contriever | living | [docs/comparison-systems.md](docs/comparison-systems.md) |
 
 ## Why a separate repo
 
@@ -29,7 +43,37 @@ modules (`pglite-engine`, `operations`, `link-extraction`, etc.) via the
 git clone https://github.com/garrytan/gbrain-evals.git
 cd gbrain-evals
 bun install
+```
 
+### Run LongMemEval (public benchmark, 500 questions × 4 adapters)
+
+```sh
+# Download the LongMemEval _s split (~278MB, one-time)
+mkdir -p ~/datasets/longmemeval
+curl -Lo ~/datasets/longmemeval/longmemeval_s.json \
+  https://huggingface.co/datasets/xiaowu0162/longmemeval/resolve/main/longmemeval_s
+
+export OPENAI_API_KEY="sk-..."        # required for vector + hybrid adapters
+export ANTHROPIC_API_KEY="sk-ant-..." # required for hybrid+expansion adapter only
+
+# 4 adapters × 500 questions, 3 parallel workers, 10-min batches w/ resume
+bash eval/runner/longmemeval-batch.sh
+
+# One adapter only
+bash eval/runner/longmemeval-batch.sh --adapters hybrid
+
+# Stratified sample for fast iteration
+bun eval/runner/longmemeval.ts --stratify 10  # 10 Q's per type
+```
+
+First run pays ~$2 OpenAI embeddings; subsequent runs hit the local
+content-addressed cache (~$0). See the published
+[longmemeval-s benchmark report](docs/benchmarks/2026-05-07-longmemeval-s.md)
+for headline numbers and methodology.
+
+### Run BrainBench (in-house corpus, 240-page fictional life)
+
+```sh
 # Run the full 4-adapter benchmark (N=5, ~15 min, no API keys required)
 bun run eval:run
 
@@ -47,6 +91,22 @@ bun run eval:brainbench:published       # ~$200 Opus baseline
 bun run eval:brainbench                 # N=5 iteration (~$100)
 bun run eval:brainbench:smoke           # N=1 smoke (~$22)
 ```
+
+## Public benchmarks
+
+| Benchmark | Source | What it tests | gbrain best result |
+|---|---|---|---|
+| **LongMemEval `_s`** | [xiaowu0162/longmemeval](https://huggingface.co/datasets/xiaowu0162/longmemeval) | Retrieval recall over long-running chat (500 Q's, 6 question types, ~50 distractor sessions per haystack) | **97.60% R@5** ([report](docs/benchmarks/2026-05-07-longmemeval-s.md)) |
+| LongMemEval `_oracle` | same source, easier split (3 sessions per haystack) | sanity baseline | not yet run (trivial) |
+| LongMemEval `_m` | same source, harder split (200 distractors) | retrieval under heavier noise | filed as TODO |
+| ConvoMem (Salesforce) | 75K+ multi-turn QA pairs | conversational memory at scale | filed as TODO |
+| LoCoMo | 1,986 multi-hop QA | multi-hop reasoning over conversation | filed as TODO |
+
+Each public benchmark gets a runner under `eval/runner/<bench>.ts`, a
+report under `docs/benchmarks/<date>-<bench>.md`, and per-row entries in
+[`docs/comparison-systems.md`](docs/comparison-systems.md) with sourced
+numbers from MemPalace, Hindsight, Mastra, Supermemory, Stella,
+Contriever, and BM25 baselines.
 
 ## BrainBench Cat catalog
 
@@ -89,27 +149,37 @@ Regenerate with `bun run eval:generate-amara-life` (requires
 
 ```
 gbrain-evals/
+├── CLAUDE.md                         Spec for the platonic-ideal benchmark report
 ├── eval/
 │   ├── data/
-│   │   ├── world-v1/                 240 committed biographical pages
-│   │   ├── amara-life-v1/            Amara's fictional life (committed)
+│   │   ├── world-v1/                 240 committed biographical pages (BrainBench)
+│   │   ├── amara-life-v1/            Amara's fictional life (BrainBench)
 │   │   ├── gold/                     Sealed qrels + perturbation gold
+│   │   ├── longmemeval/embed-cache/  Embedding cache (gitignored, ~700MB)
 │   │   └── multimodal/               PDF/audio/HTML fixtures (on-demand)
 │   ├── schemas/                      Portable JSON Schema contracts
 │   ├── generators/                   world.ts + amara-life.ts + Opus
-│   ├── runner/                       12 Cat runners + adapters + judge
+│   ├── runner/                       12 Cat runners + LongMemEval + adapters + judge
 │   │   ├── adapters/                 grep-only, vector, vector-grep-rrf-fusion, claude-sonnet
 │   │   ├── loaders/                  PDF + corpus loaders
 │   │   ├── queries/                  Tier 5 fuzzy + 5.5 synthetic
-│   │   ├── all.ts                    Master runner (p-limit(2) async fanout)
+│   │   ├── all.ts                    BrainBench master runner
 │   │   ├── cat{5,6,8,9,11}-*.ts      v1 Complete runners
+│   │   ├── longmemeval.ts            LongMemEval runner (4 adapters, NDJSON resume, parallel sharding)
+│   │   ├── longmemeval-cache.ts      Content-addressed embedding cache (SQLite, WAL, busy_timeout)
+│   │   ├── longmemeval-aggregate.ts  Aggregator over the NDJSON stream
+│   │   ├── longmemeval-batch.sh      3-worker × 10-min batch wrapper with auto-resume
+│   │   ├── longmemeval-chart.ts      Inline-SVG headline + per-type chart generator
 │   │   ├── tool-bridge.ts            12 read + 3 dry_run tools
 │   │   ├── judge.ts                  Haiku judge, structured evidence contract
 │   │   ├── recorder.ts               6-artifact flight-recorder
 │   │   └── llm-budget.ts             Shared Anthropic-call semaphore
+│   ├── reports/                      Transient run output (gitignored)
 │   └── cli/                          world-view, query-validate, query-new
 ├── test/eval/                        Unit tests (314 tests, 1354 expect calls)
-└── docs/benchmarks/                  Committed scorecards per release
+└── docs/
+    ├── benchmarks/                   Published scorecards per release + their charts
+    └── comparison-systems.md         Living list of named systems w/ published R@k numbers
 ```
 
 ## Three contributor paths
