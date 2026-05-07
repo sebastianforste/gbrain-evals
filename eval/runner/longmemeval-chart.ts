@@ -59,9 +59,10 @@ const EXTERNAL_BASELINES: ExternalBaseline[] = [
 ];
 
 const COLORS = {
-  hybrid: '#16a34a',      // green-600
-  keyword: '#9ca3af',     // gray-400
-  external: '#f59e0b',    // amber-500
+  hybrid: '#16a34a',      // green-600 — primary gbrain (hybrid family)
+  vector: '#10b981',      // emerald-500 — gbrain vector-only (slightly different green)
+  keyword: '#6b7280',     // gray-500 — keyword baseline (deemphasized)
+  external: '#f59e0b',    // amber-500 — published competitor numbers
   bgPanel: '#0a0a0a',
   bgCard: '#171717',
   text: '#e5e7eb',
@@ -76,6 +77,7 @@ function pct(x: number): string {
 
 function adapterColor(name: string): string {
   if (name.includes('hybrid')) return COLORS.hybrid;
+  if (name.includes('vector')) return COLORS.vector;
   if (name.includes('keyword')) return COLORS.keyword;
   return COLORS.external;
 }
@@ -84,52 +86,79 @@ function escapeXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// ─── Headline card ──────────────────────────────────────────────────
+// ─── Headline horizontal bar chart ──────────────────────────────────
 
 function headlineCard(summaries: AdapterSummary[], topK: number): string {
-  const W = 880;
-  const cardPad = 24;
-  const numCards = summaries.length + EXTERNAL_BASELINES.filter(b => b.topK === topK).length;
-  const cardW = (W - cardPad * (numCards + 1)) / numCards;
-  const H = 200;
-
-  const cards: Array<{ label: string; value: string; sub: string; color: string; isUs: boolean }> = [];
+  // Rows: gbrain adapters + applicable external baselines.
+  interface Row {
+    label: string;
+    sub: string;
+    recall: number;
+    color: string;
+    isUs: boolean;
+  }
+  const rows: Row[] = [];
   for (const s of summaries) {
-    cards.push({
+    rows.push({
       label: s.adapter,
-      value: pct(s.recall_at_k),
-      sub: `n=${s.total} · k=${s.topK} · ${s.total_seconds.toFixed(0)}s`,
+      sub: `n=${s.total} · k=${s.topK}`,
+      recall: s.recall_at_k,
       color: adapterColor(s.adapter),
       isUs: true,
     });
   }
   for (const b of EXTERNAL_BASELINES.filter(b => b.topK === topK)) {
-    cards.push({
+    rows.push({
       label: b.label,
-      value: pct(b.recall),
       sub: `n=${b.questions} · k=${b.topK} · published`,
+      recall: b.recall,
       color: COLORS.external,
       isUs: false,
     });
   }
+  // Sort by recall descending so the top performer leads the eye.
+  rows.sort((a, b) => b.recall - a.recall);
 
-  const cardsXml = cards.map((c, i) => {
-    const x = cardPad + i * (cardW + cardPad);
-    const valueFontSize = c.value.length > 5 ? 36 : 44;
+  const W = 880;
+  const padL = 220;       // wide enough for "gbrain-hybrid+expansion" + "MemPal hybrid v4 + Haiku rerank"
+  const padR = 90;        // room for value label + tail
+  const padT = 24;
+  const padB = 36;
+  const rowH = 40;
+  const barH = 22;
+  const H = padT + rows.length * rowH + padB;
+  const plotW = W - padL - padR;
+
+  // Axis grid every 20% so the eye can read off precise values without cluttering bars.
+  const grid: string[] = [];
+  for (let v = 0.2; v <= 1.0; v += 0.2) {
+    const x = padL + plotW * v;
+    grid.push(`<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT + rows.length * rowH}" stroke="${COLORS.grid}" stroke-width="1" />`);
+    grid.push(`<text x="${x}" y="${padT + rows.length * rowH + 18}" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,monospace" font-size="10" fill="${COLORS.textMuted}">${(v * 100).toFixed(0)}%</text>`);
+  }
+
+  const rowsXml = rows.map((r, i) => {
+    const yMid = padT + i * rowH + rowH / 2;
+    const barY = yMid - barH / 2;
+    const w = plotW * r.recall;
+    const labelWeight = r.isUs ? 600 : 400;
+    const labelFill = r.isUs ? COLORS.text : COLORS.textMuted;
+    const valueFill = r.color;
+    const valueX = padL + w + 8;
     return `
-      <g transform="translate(${x},${cardPad})">
-        <rect width="${cardW}" height="${H - cardPad * 2}" rx="8" fill="${COLORS.bgCard}" stroke="${c.color}" stroke-width="${c.isUs ? 2 : 1}" />
-        <text x="${cardW / 2}" y="32" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" fill="${COLORS.textMuted}">${escapeXml(c.label)}</text>
-        <text x="${cardW / 2}" y="${32 + valueFontSize + 4}" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,monospace" font-size="${valueFontSize}" font-weight="700" fill="${c.color}">${c.value}</text>
-        <text x="${cardW / 2}" y="${H - cardPad * 2 - 12}" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,monospace" font-size="11" fill="${COLORS.textMuted}">${escapeXml(c.sub)}</text>
-      </g>
+      <text x="${padL - 12}" y="${yMid + 4}" text-anchor="end" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" font-weight="${labelWeight}" fill="${labelFill}">${escapeXml(r.label)}</text>
+      <rect x="${padL}" y="${barY}" width="${w}" height="${barH}" rx="3" fill="${r.color}" opacity="${r.isUs ? 1.0 : 0.7}" />
+      <text x="${valueX}" y="${yMid + 4}" text-anchor="start" font-family="ui-monospace,SFMono-Regular,monospace" font-size="13" font-weight="700" fill="${valueFill}">${pct(r.recall)}</text>
+      <text x="${padL - 12}" y="${yMid + 18}" text-anchor="end" font-family="ui-monospace,SFMono-Regular,monospace" font-size="10" fill="${COLORS.textMuted}">${escapeXml(r.sub)}</text>
     `;
   }).join('');
 
   return `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
   <rect width="${W}" height="${H}" fill="${COLORS.bgPanel}" />
-  ${cardsXml}
+  <text x="${padL}" y="16" font-family="ui-sans-serif,system-ui,sans-serif" font-size="12" fill="${COLORS.textMuted}">recall@${topK} on LongMemEval _s — full 500 questions</text>
+  ${grid.join('\n  ')}
+  ${rowsXml}
 </svg>
 `.trim();
 }
