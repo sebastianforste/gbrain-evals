@@ -1,0 +1,28 @@
+{
+  "id": "micar-emt-redemption-001",
+  "domain": "MiCAR",
+  "task_type": "whitepaper_first_pass_review",
+  "question": "Does this EMT white paper explain redemption rights and redemption procedure sufficiently for first-pass review?",
+  "facts": {
+    "whitepaper_type": "e-money token",
+    "draft_section": "Token holders may redeem tokens in accordance with applicable law. Further details may be provided later.",
+    "jurisdiction": "EU"
+  },
+  "sources_required": [
+    "Regulation (EU) 2023/1114, Article 49",
+    "Regulation (EU) 2023/1114, Article 51",
+    "Regulation (EU) 2023/1114, Annex III"
+  ],
+  "expected_findings": [
+    "redemption rights require concrete disclosure",
+    "redemption procedure requires review",
+    "generic promise to comply with applicable law is not enough for first-pass approval",
+    "answer should request a revised redemption section"
+  ],
+  "must_escalate": true,
+  "ideal_answer_shape": {
+    "answer": "Insufficient for first-pass approval; escalate for lawyer review.",
+    "reason": "The redemption section is generic and does not provide a concrete redemption procedure or meaningful holder-facing disclosure.",
+    "required_next_step": "Request a detailed redemption rights and procedure section and map it against Article 49, Article 51 and Annex III."
+  }
+}
