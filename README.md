@@ -1,6 +1,6 @@
 # gbrain-evals
 
-> Fork note by Sebastian Förste: this fork adds a legal AI evaluation layer for retrieval, citation accuracy, legal completeness, uncertainty handling and escalation quality. See [LEGAL_RAG_EVALS.md](LEGAL_RAG_EVALS.md) and [`legal-rag-evals/`](legal-rag-evals/README.md).
+> Fork note by Sebastian Förste: this fork adds a legal AI evaluation layer for retrieval, citation accuracy, legal completeness, uncertainty handling and escalation quality. See [LEGAL_RAG_EVALS.md](LEGAL_RAG_EVALS.md), [`legal-rag-evals/`](legal-rag-evals/README.md), and the reviewer runbook at [`legal-rag-evals/launch-readiness.md`](legal-rag-evals/launch-readiness.md).
 
 **Public benchmarks for personal-knowledge agent stacks.** Two families,
 both reproducible: BrainBench (our own corpus, in-house Cats 1–12) and
@@ -15,7 +15,7 @@ This fork includes a legal RAG evaluation scaffold for regulated legal workflows
 - failure taxonomy for retrieval, citation, legal reasoning, workflow and confidentiality failures
 - evaluation dimensions for legal completeness, escalation quality and uncertainty handling
 
-Start here: [Legal RAG Evals](legal-rag-evals/README.md).
+Start here: [Legal RAG Evals](legal-rag-evals/README.md). For a quick evaluator path, see [`legal-rag-evals/launch-readiness.md`](legal-rag-evals/launch-readiness.md).
 
 ## Latest results
 
@@ -36,7 +36,7 @@ snapshot:** [docs/benchmarks/2026-05-23-v0.40.6.0-snapshot.md](docs/benchmarks/2
   Headline numbers byte-identical to the v0.20.0 baseline.
 
 | Benchmark | Latest result | Date | Report |
-|---|---|---|---|
+|---|---|---|
 | v0.40.6.0 snapshot (comprehensive) | gbrain master HEAD | 2026-05-23 | [link](docs/benchmarks/2026-05-23-v0.40.6.0-snapshot.md) |
 | LongMemEval `_s` (public) | gbrain-hybrid 97.60% R@5 | 2026-05-07 | [link](docs/benchmarks/2026-05-07-longmemeval-s.md) |
 | BrainBench Cat 14+15 — Calibration A/B | gates v0.36.1.0 advice quality | 2026-05-18 | [link](docs/benchmarks/2026-05-18-brainbench-cat14-cat15-calibration.md) |
