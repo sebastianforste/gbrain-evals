@@ -44,6 +44,13 @@ Use only public legal sources, synthetic facts or sanitised fixtures. No client 
 - [`fixtures/micar-emt-redemption-001.json`](fixtures/micar-emt-redemption-001.json)
 - [`scorecard-template.md`](scorecard-template.md)
 - [`failure-taxonomy.md`](failure-taxonomy.md)
+- [`evaluate-synthetic-answer.ts`](evaluate-synthetic-answer.ts)
+
+## Synthetic scoring artifact
+
+`evaluate-synthetic-answer.ts` is a tiny TypeScript scoring script. It scores a synthetic answer against the MiCAR reserve-disclosure fixture across retrieval recall, citation accuracy, legal completeness, uncertainty handling and escalation quality.
+
+It is intentionally simple. The purpose is to make the evaluation concept inspectable, not to replace a full benchmark runner.
 
 ## Intended signal
 
